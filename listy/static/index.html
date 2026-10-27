@@ -1,0 +1,90 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Listy</title>
+  <link rel="stylesheet" href="/static/style.css">
+</head>
+<body>
+<main>
+  <header><h1>Listy</h1><span class="muted">One video in, listings out</span></header>
+
+  <section class="card">
+    <form id="upload" class="drop">
+      <p><strong>Upload a walkthrough video</strong></p>
+      <p class="muted">Show each item one at a time. Listy finds every item, picks the best real photos, and drafts the listing.</p>
+      <input type="file" id="video" name="video" accept="video/*" capture="environment" required>
+      <p><button type="submit" id="go">Upload and process</button></p>
+      <div class="bar" id="upbar" hidden><div style="width:0"></div></div>
+      <p class="muted" id="upmsg"></p>
+    </form>
+  </section>
+
+  <section class="card">
+    <strong>Filming tips for better listings</strong>
+    <ul class="tips muted">
+      <li>Face a window or lamp so light falls on the items, not behind you.</li>
+      <li>Use a plain wall or sheet as the background.</li>
+      <li>Hold each item up in the middle of the frame, front then back, and pause for a second.</li>
+      <li>Show tags and any flaws up close.</li>
+      <li>Say the brand, size and any flaws out loud. Narration support is coming next.</li>
+      <li>Put the item down out of view before picking up the next one.</li>
+    </ul>
+  </section>
+
+  <section class="card">
+    <strong>Recent videos</strong>
+    <div class="joblist" id="jobs"><p class="muted">None yet.</p></div>
+  </section>
+</main>
+<script>
+const form = document.getElementById('upload');
+form.addEventListener('submit', (e) => {
+  e.preventDefault();
+  const file = document.getElementById('video').files[0];
+  if (!file) return;
+  const data = new FormData();
+  data.append('video', file);
+  const xhr = new XMLHttpRequest();
+  const bar = document.getElementById('upbar');
+  const msg = document.getElementById('upmsg');
+  bar.hidden = false;
+  document.getElementById('go').disabled = true;
+  xhr.upload.onprogress = (ev) => {
+    if (ev.lengthComputable) {
+      const pct = Math.round(ev.loaded / ev.total * 100);
+      bar.firstElementChild.style.width = pct + '%';
+      msg.textContent = `Uploading… ${pct}%`;
+    }
+  };
+  xhr.onload = () => {
+    if (xhr.status === 200) {
+      location.href = '/job/' + JSON.parse(xhr.responseText).id;
+    } else {
+      msg.textContent = 'Upload failed: ' + xhr.responseText;
+      document.getElementById('go').disabled = false;
+    }
+  };
+  xhr.onerror = () => { msg.textContent = 'Upload failed. Check your connection.'; document.getElementById('go').disabled = false; };
+  xhr.open('POST', '/api/jobs');
+  xhr.send(data);
+});
+
+fetch('/api/jobs').then(r => r.json()).then(jobs => {
+  if (!jobs.length) return;
+  const el = document.getElementById('jobs');
+  el.innerHTML = '';
+  for (const j of jobs) {
+    const a = document.createElement('a');
+    a.href = '/job/' + j.id;
+    const when = new Date(j.created * 1000).toLocaleString();
+    a.innerHTML = `<span></span><span class="muted"></span>`;
+    a.children[0].textContent = when;
+    a.children[1].textContent = j.status === 'done' ? `${j.items} items` : j.stage;
+    el.appendChild(a);
+  }
+});
+</script>
+</body>
+</html>

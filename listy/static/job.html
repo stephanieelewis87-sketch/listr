@@ -1,0 +1,223 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Listy review</title>
+  <link rel="stylesheet" href="/static/style.css">
+</head>
+<body>
+<main>
+  <header><h1><a href="/">Listy</a></h1><span class="muted" id="sub"></span></header>
+
+  <section class="card" id="status">
+    <div class="row"><strong id="stage">Loading…</strong><span class="spacer"></span><span class="muted" id="pct"></span></div>
+    <div class="bar" style="margin-top:10px"><div id="bar" style="width:0"></div></div>
+    <p class="muted" id="err" hidden></p>
+    <p id="retrywrap" hidden><button class="secondary" id="retry">Try again</button></p>
+  </section>
+
+  <section class="card" id="toolbar" hidden>
+    <div class="row">
+      <span id="counts" class="muted"></span>
+      <span class="spacer"></span>
+      <button class="secondary" id="approveAll">Approve all drafts</button>
+      <a class="button" id="exportApproved" href="#">Export approved</a>
+      <a class="button secondary" id="exportAll" href="#">Export all</a>
+    </div>
+    <p class="muted" style="margin:8px 0 0;font-size:14px">The export has a listings.csv and a folder of photos for each item.</p>
+  </section>
+
+  <div id="items"></div>
+</main>
+
+<template id="itemTpl">
+  <article class="card item">
+    <div class="row" style="margin-bottom:10px">
+      <strong class="num"></strong><span class="pill status"></span>
+      <span class="muted when" style="font-size:13px"></span>
+    </div>
+    <div class="photos"></div>
+    <div class="review" hidden><strong>Check before listing</strong><ul></ul></div>
+    <div class="fields">
+      <label>Title</label><input data-f="title" maxlength="80">
+      <div class="grid2">
+        <div><label>Price (USD)</label><input data-price type="number" step="0.01" min="0"></div>
+        <div><label>Condition</label>
+          <select data-f="condition">
+            <option value="new_with_tags">New with tags</option>
+            <option value="new_without_tags">New without tags</option>
+            <option value="excellent">Pre-owned, excellent</option>
+            <option value="good">Pre-owned, good</option>
+            <option value="fair">Pre-owned, fair</option>
+            <option value="poor">Pre-owned, poor</option>
+          </select></div>
+        <div><label>Brand</label><input data-f="brand"></div>
+        <div><label>Size</label><input data-f="size"></div>
+        <div><label>Color</label><input data-f="color"></div>
+        <div><label>Material</label><input data-f="material"></div>
+        <div><label>Department</label><input data-f="department"></div>
+        <div><label>Category</label><input data-f="category"></div>
+      </div>
+      <label>Flaws (one per line)</label><textarea data-f="flaws" data-list style="min-height:60px"></textarea>
+      <label>Description</label><textarea data-f="description"></textarea>
+      <p class="muted pricehint" style="font-size:13px"></p>
+    </div>
+    <div class="row">
+      <button class="approve">Approve</button>
+      <button class="secondary save">Save edits</button>
+      <button class="secondary skip">Skip item</button>
+      <span class="muted saved" style="font-size:13px"></span>
+    </div>
+  </article>
+</template>
+
+<script>
+const jobId = location.pathname.split('/').pop();
+const api = `/api/jobs/${jobId}`;
+let rendered = false;
+
+document.getElementById('exportApproved').href = `${api}/export.zip`;
+document.getElementById('exportAll').href = `${api}/export.zip?drafts=true`;
+document.getElementById('retry').onclick = async () => {
+  await fetch(`${api}/retry`, {method: 'POST'});
+  rendered = false;
+  poll();
+};
+
+function fmtT(s) { const m = Math.floor(s / 60); return `${m}:${String(Math.round(s % 60)).padStart(2, '0')}`; }
+
+async function patch(itemId, body) {
+  const r = await fetch(`${api}/items/${itemId}`, {
+    method: 'PATCH', headers: {'Content-Type': 'application/json'}, body: JSON.stringify(body),
+  });
+  if (!r.ok) throw new Error(await r.text());
+  return r.json();
+}
+
+function readEdits(card) {
+  const listing = {};
+  card.querySelectorAll('[data-f]').forEach(el => {
+    let v = el.value.trim();
+    if (el.hasAttribute('data-list')) v = v.split('\n').map(s => s.trim()).filter(Boolean);
+    else if (v === '' && ['brand', 'size', 'material', 'department'].includes(el.dataset.f)) v = null;
+    listing[el.dataset.f] = v;
+  });
+  const price = parseFloat(card.querySelector('[data-price]').value);
+  return {listing, price_override: isNaN(price) ? null : price};
+}
+
+function setStatus(card, status) {
+  const pill = card.querySelector('.status');
+  pill.textContent = status;
+  pill.className = 'pill status ' + status;
+  card.dataset.status = status;
+  updateCounts();
+}
+
+function updateCounts() {
+  const cards = [...document.querySelectorAll('.item')];
+  const approved = cards.filter(c => c.dataset.status === 'approved').length;
+  document.getElementById('counts').textContent = `${approved} of ${cards.length} approved`;
+}
+
+function renderItem(item, n) {
+  const card = document.getElementById('itemTpl').content.firstElementChild.cloneNode(true);
+  card.dataset.id = item.id;
+  card.querySelector('.num').textContent = `#${n}`;
+  card.querySelector('.when').textContent = `${fmtT(item.segment.start_s)}–${fmtT(item.segment.end_s)} · ${item.segment.label}`;
+  setStatus(card, item.status);
+
+  const photos = card.querySelector('.photos');
+  for (const p of item.photos) {
+    const fig = document.createElement('figure');
+    const img = document.createElement('img');
+    img.loading = 'lazy';
+    img.src = `${api}/items/${item.id}/photos/${p.file}`;
+    img.alt = p.role;
+    const cap = document.createElement('figcaption');
+    cap.textContent = p.role;
+    fig.append(img, cap);
+    photos.appendChild(fig);
+  }
+
+  const l = item.listing;
+  if (!l) {
+    card.querySelector('.fields').innerHTML = '';
+    const p = document.createElement('p');
+    p.className = 'muted';
+    p.textContent = item.status === 'failed' ? `Couldn't draft this one: ${item.error}` : 'Still writing this listing…';
+    card.querySelector('.fields').appendChild(p);
+    card.querySelectorAll('button').forEach(b => b.disabled = true);
+    return card;
+  }
+
+  card.querySelectorAll('[data-f]').forEach(el => {
+    const v = l[el.dataset.f];
+    el.value = Array.isArray(v) ? v.join('\n') : (v ?? '');
+  });
+  card.querySelector('[data-price]').value = item.price_override ?? l.price.high;
+  card.querySelector('.pricehint').textContent = `Suggested $${l.price.low}–$${l.price.high}. ${l.price_reasoning}`;
+
+  if (l.needs_review && l.needs_review.length) {
+    const box = card.querySelector('.review');
+    box.hidden = false;
+    for (const note of l.needs_review) {
+      const li = document.createElement('li');
+      li.textContent = note;
+      box.querySelector('ul').appendChild(li);
+    }
+  }
+
+  const saved = card.querySelector('.saved');
+  const save = async (status) => {
+    try {
+      const body = readEdits(card);
+      if (status) body.status = status;
+      const updated = await patch(item.id, body);
+      setStatus(card, updated.status);
+      saved.textContent = 'Saved';
+      setTimeout(() => saved.textContent = '', 1500);
+    } catch (e) { saved.textContent = 'Save failed: ' + e.message; }
+  };
+  card.querySelector('.approve').onclick = () => save('approved');
+  card.querySelector('.save').onclick = () => save();
+  card.querySelector('.skip').onclick = () => save('skipped');
+  return card;
+}
+
+document.getElementById('approveAll').onclick = async () => {
+  for (const card of document.querySelectorAll('.item')) {
+    if (card.dataset.status === 'draft') card.querySelector('.approve').click();
+  }
+};
+
+async function poll() {
+  const job = await (await fetch(api)).json();
+  document.getElementById('sub').textContent = job.duration_s ? `${fmtT(job.duration_s)} video` : '';
+  document.getElementById('stage').textContent = job.stage;
+  document.getElementById('pct').textContent = Math.round(job.progress * 100) + '%';
+  document.getElementById('bar').style.width = (job.progress * 100) + '%';
+  const err = document.getElementById('err');
+  err.hidden = !job.error;
+  err.textContent = job.error || '';
+  document.getElementById('retrywrap').hidden = job.status !== 'failed';
+
+  if (job.status === 'done' || job.status === 'failed') {
+    document.getElementById('status').hidden = job.status === 'done';
+    if (!rendered && job.items.length) {
+      const list = document.getElementById('items');
+      list.innerHTML = '';
+      job.items.forEach((it, i) => list.appendChild(renderItem(it, i + 1)));
+      document.getElementById('toolbar').hidden = false;
+      updateCounts();
+      rendered = true;
+    }
+    return;
+  }
+  setTimeout(poll, 2000);
+}
+poll();
+</script>
+</body>
+</html>
